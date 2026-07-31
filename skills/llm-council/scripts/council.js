@@ -133,7 +133,7 @@ async function callAnthropic(provider, model, system, user) {
     system,
     messages: [{ role: 'user', content: user }],
   };
-  if (RUN_OPTS.reasoning_effort) payload.thinking = { type: 'enabled', budget_tokens: Math.min(RUN_OPTS.max_tokens * 0.8, 16000) };
+  if (RUN_OPTS.reasoning_effort) payload.thinking = { type: 'adaptive' };
   const authHeaders = {
     'x-api-key': process.env[provider.envKey],
     'anthropic-version': '2023-06-01',
@@ -210,7 +210,14 @@ function parseIntSafe(val, name) {
   if (args.timeout) RUN_OPTS.timeout_ms = parseIntSafe(args.timeout, 'timeout');
   if (args['max-retries']) RUN_OPTS.max_retries = parseIntSafe(args['max-retries'], 'max-retries');
   if (args.sequential) RUN_OPTS.sequential = true;
-  if (args['reasoning-effort']) RUN_OPTS.reasoning_effort = args['reasoning-effort'];
+  if (args['reasoning-effort']) {
+    const effort = args['reasoning-effort'];
+    if (!['low', 'medium', 'high'].includes(effort)) {
+      console.error(`Invalid --reasoning-effort: ${effort} (must be low, medium, or high)`);
+      process.exit(2);
+    }
+    RUN_OPTS.reasoning_effort = effort;
+  }
 
   // Run a list of async callables either in parallel (default) or sequentially.
   // Sequential mode avoids concurrent-request limits on free NIM/OpenRouter endpoints.
