@@ -59,7 +59,7 @@ function pickProvider(arg) {
 
 // Runtime tuning knobs that can be overridden via CLI flags in `cmdRun`.
 // Defaults preserve previous hard-coded behavior.
-const RUN_OPTS = { max_tokens: 4000, timeout_ms: 120000, max_retries: 1 };
+const RUN_OPTS = { max_tokens: 4000, timeout_ms: 120000, max_retries: 1, sequential: false };
 
 function postJSON(urlStr, body, headers, timeoutMs = RUN_OPTS.timeout_ms) {
   return new Promise((resolve, reject) => {
@@ -196,7 +196,7 @@ async function cmdRun(args) {
   const provider = PROVIDERS[providerName];
   if (!provider.baseUrl) { console.error(`provider ${providerName} requires LLM_COUNCIL_BASE_URL`); process.exit(2); }
 
-  function parseIntSafe(val, name) {
+function parseIntSafe(val, name) {
     const n = parseInt(val, 10);
     if (isNaN(n) || n <= 0 || n !== Math.floor(n)) {
       console.error(`Invalid --${name}: ${val} (must be a positive integer)`);
@@ -207,6 +207,19 @@ async function cmdRun(args) {
   if (args['max-tokens']) RUN_OPTS.max_tokens = parseIntSafe(args['max-tokens'], 'max-tokens');
   if (args.timeout) RUN_OPTS.timeout_ms = parseIntSafe(args.timeout, 'timeout');
   if (args['max-retries']) RUN_OPTS.max_retries = parseIntSafe(args['max-retries'], 'max-retries');
+  if (args.sequential) RUN_OPTS.sequential = true;
+
+  // Run a list of async callables either in parallel (default) or sequentially.
+  // Sequential mode avoids concurrent-request limits on free NIM/OpenRouter endpoints.
+  async function runCalls(callables) {
+    if (!RUN_OPTS.sequential) return Promise.allSettled(callables);
+    const results = [];
+    for (const fn of callables) {
+      try { results.push({ status: 'fulfilled', value: await fn() }); }
+      catch (e) { results.push({ status: 'rejected', reason: e }); }
+    }
+    return results;
+  }
 
   const models = (args.models ? String(args.models).split(',') : provider.defaultModels).filter(Boolean);
   const chairman = args.chairman || provider.defaultChairman;
@@ -226,7 +239,7 @@ async function cmdRun(args) {
 
   // Phase 1
   const sysIndep = 'You are participating in an LLM council deliberation. Provide your best, most thoughtful response to the query. Be comprehensive but focused.';
-  const phase1Settled = await Promise.allSettled(models.map(m => provider.call(provider, m, sysIndep, query)));
+  const phase1Settled = await runCalls(models.map(m => () => provider.call(provider, m, sysIndep, query)));
   const phase1Entries = phase1Settled.map((s, i) => settledToEntry(models[i], s));
   const phase1 = Object.fromEntries(models.map((m, i) => [m, phase1Entries[i]]));
   fs.writeFileSync(path.join(sessionDir, 'phase1_responses.json'), JSON.stringify(phase1, null, 2));
@@ -237,7 +250,7 @@ async function cmdRun(args) {
   const anon = models.map(m => `=== Response ${labelOf[m]} ===\n${phase1[m].content}`).join('\n\n');
   const sysRank = (own) => `You are ranking AI responses objectively. Your own response is labeled '${own}'.`;
   const userRank = `QUERY:\n${query}\n\nRESPONSES:\n${anon}\n\nRank from BEST to WORST. Format:\nRANKINGS:\n1. [Letter] - [reason]\n2. [Letter] - [reason]\n...`;
-  const phase2Settled = await Promise.allSettled(models.map(m => provider.call(provider, m, sysRank(labelOf[m]), userRank)));
+  const phase2Settled = await runCalls(models.map(m => () => provider.call(provider, m, sysRank(labelOf[m]), userRank)));
   const phase2Entries = phase2Settled.map((s, i) => settledToEntry(models[i], s));
   const phase2 = { label_of: labelOf, rankings: Object.fromEntries(models.map((m, i) => [m, phase2Entries[i]])) };
   fs.writeFileSync(path.join(sessionDir, 'phase2_rankings.json'), JSON.stringify(phase2, null, 2));
@@ -311,14 +324,16 @@ function cmdShow(args) {
 function usage() {
   console.error(`Usage:
   council.js run "<query>" [--models id1,id2,id3] [--chairman id] [--provider name] [--wiki slug]
-                        [--max-tokens N] [--timeout ms] [--max-retries N]
+                        [--max-tokens N] [--timeout ms] [--max-retries N] [--sequential]
   council.js providers
   council.js show <session-id>
 
 Options:
   --max-tokens   Max output tokens per model call (default 4000; bump to 16000+ for reasoning models)
   --timeout      HTTP request timeout in ms (default 120000; bump to 300000+ for slow NIM endpoints)
-  --max-retries  Retry count on 429/5xx (default 1; exponential backoff 2s, 4s, ...)`);
+  --max-retries  Retry count on 429/5xx (default 1; exponential backoff 2s, 4s, ...)
+  --sequential   Run model calls one at a time instead of in parallel (use when free endpoints
+                 like NVIDIA NIM reject concurrent requests with ETIMEDOUT / 429)`);
   process.exit(1);
 }
 
