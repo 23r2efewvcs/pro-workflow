@@ -59,7 +59,7 @@ function pickProvider(arg) {
 
 // Runtime tuning knobs that can be overridden via CLI flags in `cmdRun`.
 // Defaults preserve previous hard-coded behavior.
-const RUN_OPTS = { max_tokens: 4000, timeout_ms: 120000, max_retries: 1, sequential: false };
+const RUN_OPTS = { max_tokens: 4000, timeout_ms: 120000, max_retries: 1, sequential: false, reasoning_effort: null };
 
 function postJSON(urlStr, body, headers, timeoutMs = RUN_OPTS.timeout_ms) {
   return new Promise((resolve, reject) => {
@@ -111,6 +111,7 @@ async function callOpenAICompat(provider, model, system, user) {
     max_tokens: RUN_OPTS.max_tokens,
     temperature: 1,
   };
+  if (RUN_OPTS.reasoning_effort) payload.reasoning = { effort: RUN_OPTS.reasoning_effort };
   const authHeaders = { Authorization: `Bearer ${process.env[provider.envKey]}` };
 
   const { res, error } = await postJSONWithRetry(url, payload, authHeaders);
@@ -132,6 +133,7 @@ async function callAnthropic(provider, model, system, user) {
     system,
     messages: [{ role: 'user', content: user }],
   };
+  if (RUN_OPTS.reasoning_effort) payload.thinking = { type: 'enabled', budget_tokens: Math.min(RUN_OPTS.max_tokens * 0.8, 16000) };
   const authHeaders = {
     'x-api-key': process.env[provider.envKey],
     'anthropic-version': '2023-06-01',
@@ -208,6 +210,7 @@ function parseIntSafe(val, name) {
   if (args.timeout) RUN_OPTS.timeout_ms = parseIntSafe(args.timeout, 'timeout');
   if (args['max-retries']) RUN_OPTS.max_retries = parseIntSafe(args['max-retries'], 'max-retries');
   if (args.sequential) RUN_OPTS.sequential = true;
+  if (args['reasoning-effort']) RUN_OPTS.reasoning_effort = args['reasoning-effort'];
 
   // Run a list of async callables either in parallel (default) or sequentially.
   // Sequential mode avoids concurrent-request limits on free NIM/OpenRouter endpoints.
@@ -325,15 +328,18 @@ function usage() {
   console.error(`Usage:
   council.js run "<query>" [--models id1,id2,id3] [--chairman id] [--provider name] [--wiki slug]
                         [--max-tokens N] [--timeout ms] [--max-retries N] [--sequential]
+                        [--reasoning-effort low|medium|high]
   council.js providers
   council.js show <session-id>
 
 Options:
-  --max-tokens   Max output tokens per model call (default 4000; bump to 16000+ for reasoning models)
-  --timeout      HTTP request timeout in ms (default 120000; bump to 300000+ for slow NIM endpoints)
-  --max-retries  Retry count on connection errors and 429/5xx (default 1; exponential backoff 2s, 4s, ...)
-  --sequential   Run model calls one at a time instead of in parallel (use when free endpoints
-                 like NVIDIA NIM reject concurrent requests with ETIMEDOUT / 429)`);
+  --max-tokens       Max output tokens per model call (default 4000; bump to 16000+ for reasoning models)
+  --timeout          HTTP request timeout in ms (default 120000; bump to 300000+ for slow NIM endpoints)
+  --max-retries      Retry count on connection errors and 429/5xx (default 1; exponential backoff 2s, 4s, ...)
+  --sequential       Run model calls one at a time instead of in parallel (use when free endpoints
+                     like NVIDIA NIM reject concurrent requests with ETIMEDOUT / 429)
+  --reasoning-effort Pass reasoning effort to OpenAI-compat payload as reasoning.effort
+                     (low|medium|high) — for o1/o3/DeepSeek/Claude thinking models`);
   process.exit(1);
 }
 
