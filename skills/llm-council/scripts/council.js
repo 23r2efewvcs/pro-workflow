@@ -212,7 +212,7 @@ function parseIntSafe(val, name) {
   // Run a list of async callables either in parallel (default) or sequentially.
   // Sequential mode avoids concurrent-request limits on free NIM/OpenRouter endpoints.
   async function runCalls(callables) {
-    if (!RUN_OPTS.sequential) return Promise.allSettled(callables);
+    if (!RUN_OPTS.sequential) return Promise.allSettled(callables.map(fn => fn()));
     const results = [];
     for (const fn of callables) {
       try { results.push({ status: 'fulfilled', value: await fn() }); }
