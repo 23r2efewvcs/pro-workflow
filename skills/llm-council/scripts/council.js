@@ -168,8 +168,16 @@ async function cmdRun(args) {
   const provider = PROVIDERS[providerName];
   if (!provider.baseUrl) { console.error(`provider ${providerName} requires LLM_COUNCIL_BASE_URL`); process.exit(2); }
 
-  if (args['max-tokens']) RUN_OPTS.max_tokens = parseInt(args['max-tokens'], 10);
-  if (args.timeout) RUN_OPTS.timeout_ms = parseInt(args.timeout, 10);
+  function parseIntSafe(val, name) {
+    const n = parseInt(val, 10);
+    if (isNaN(n) || n <= 0 || n !== Math.floor(n)) {
+      console.error(`Invalid --${name}: ${val} (must be a positive integer)`);
+      process.exit(2);
+    }
+    return n;
+  }
+  if (args['max-tokens']) RUN_OPTS.max_tokens = parseIntSafe(args['max-tokens'], 'max-tokens');
+  if (args.timeout) RUN_OPTS.timeout_ms = parseIntSafe(args.timeout, 'timeout');
 
   const models = (args.models ? String(args.models).split(',') : provider.defaultModels).filter(Boolean);
   const chairman = args.chairman || provider.defaultChairman;
