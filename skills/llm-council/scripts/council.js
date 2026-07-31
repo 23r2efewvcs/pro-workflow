@@ -59,7 +59,7 @@ function pickProvider(arg) {
 
 // Runtime tuning knobs that can be overridden via CLI flags in `cmdRun`.
 // Defaults preserve previous hard-coded behavior.
-const RUN_OPTS = { max_tokens: 4000, timeout_ms: 120000 };
+const RUN_OPTS = { max_tokens: 4000, timeout_ms: 120000, max_retries: 1 };
 
 function postJSON(urlStr, body, headers, timeoutMs = RUN_OPTS.timeout_ms) {
   return new Promise((resolve, reject) => {
@@ -85,12 +85,33 @@ function postJSON(urlStr, body, headers, timeoutMs = RUN_OPTS.timeout_ms) {
 async function callOpenAICompat(provider, model, system, user) {
   const start = Date.now();
   const url = `${provider.baseUrl}/chat/completions`;
-  const res = await postJSON(url, {
+  const payload = {
     model,
     messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
     max_tokens: RUN_OPTS.max_tokens,
     temperature: 1,
-  }, { Authorization: `Bearer ${process.env[provider.envKey]}` });
+  };
+  const authHeaders = { Authorization: `Bearer ${process.env[provider.envKey]}` };
+
+  let res;
+  let attempt = 0;
+  while (true) {
+    try {
+      res = await postJSON(url, payload, authHeaders);
+    } catch (e) {
+      // Connection-level error (ETIMEDOUT, ECONNRESET)
+      if (attempt >= RUN_OPTS.max_retries) {
+        return { success: false, content: `[ERROR connection: ${e.code || e.message}]`, model, latency_ms: Date.now() - start };
+      }
+      attempt += 1;
+      await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
+      continue;
+    }
+    if (res.status < 500 && res.status !== 429) break;
+    if (attempt >= RUN_OPTS.max_retries) break;
+    attempt += 1;
+    await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
+  }
   const elapsed = Date.now() - start;
   if (res.status >= 400) return { success: false, content: `[ERROR ${res.status}: ${res.body.slice(0, 300)}]`, model, latency_ms: elapsed };
   let data;
@@ -102,15 +123,35 @@ async function callOpenAICompat(provider, model, system, user) {
 async function callAnthropic(provider, model, system, user) {
   const start = Date.now();
   const url = `${provider.baseUrl}/v1/messages`;
-  const res = await postJSON(url, {
+  const payload = {
     model,
     max_tokens: RUN_OPTS.max_tokens,
     system,
     messages: [{ role: 'user', content: user }],
-  }, {
+  };
+  const authHeaders = {
     'x-api-key': process.env[provider.envKey],
     'anthropic-version': '2023-06-01',
-  });
+  };
+
+  let res;
+  let attempt = 0;
+  while (true) {
+    try {
+      res = await postJSON(url, payload, authHeaders);
+    } catch (e) {
+      if (attempt >= RUN_OPTS.max_retries) {
+        return { success: false, content: `[ERROR connection: ${e.code || e.message}]`, model, latency_ms: Date.now() - start };
+      }
+      attempt += 1;
+      await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
+      continue;
+    }
+    if (res.status < 500 && res.status !== 429) break;
+    if (attempt >= RUN_OPTS.max_retries) break;
+    attempt += 1;
+    await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
+  }
   const elapsed = Date.now() - start;
   if (res.status >= 400) return { success: false, content: `[ERROR ${res.status}: ${res.body.slice(0, 300)}]`, model, latency_ms: elapsed };
   let data;
@@ -170,6 +211,7 @@ async function cmdRun(args) {
 
   if (args['max-tokens']) RUN_OPTS.max_tokens = parseInt(args['max-tokens'], 10);
   if (args.timeout) RUN_OPTS.timeout_ms = parseInt(args.timeout, 10);
+  if (args['max-retries']) RUN_OPTS.max_retries = parseInt(args['max-retries'], 10);
 
   const models = (args.models ? String(args.models).split(',') : provider.defaultModels).filter(Boolean);
   const chairman = args.chairman || provider.defaultChairman;
@@ -274,13 +316,14 @@ function cmdShow(args) {
 function usage() {
   console.error(`Usage:
   council.js run "<query>" [--models id1,id2,id3] [--chairman id] [--provider name] [--wiki slug]
-                        [--max-tokens N] [--timeout ms]
+                        [--max-tokens N] [--timeout ms] [--max-retries N]
   council.js providers
   council.js show <session-id>
 
 Options:
-  --max-tokens  Max output tokens per model call (default 4000; bump to 16000+ for reasoning models)
-  --timeout     HTTP request timeout in ms (default 120000; bump to 300000+ for slow NIM endpoints)`);
+  --max-tokens   Max output tokens per model call (default 4000; bump to 16000+ for reasoning models)
+  --timeout      HTTP request timeout in ms (default 120000; bump to 300000+ for slow NIM endpoints)
+  --max-retries  Retry count on 429/5xx (default 1; exponential backoff 2s, 4s, ...)`);
   process.exit(1);
 }
 
