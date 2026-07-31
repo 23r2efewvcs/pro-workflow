@@ -61,6 +61,41 @@ function pickProvider(arg) {
 // Defaults preserve previous hard-coded behavior.
 const RUN_OPTS = { max_tokens: 4000, timeout_ms: 120000, max_retries: 1, sequential: false, reasoning_effort: null };
 
+// Reasoning-content extraction heuristics by provider/model.
+// Different reasoning models expose the final answer in different fields of the OpenAI-compat response.
+// Order matters: most-specific first.
+function extractContent(data) {
+  const choice = data?.choices?.[0];
+  if (!choice) return '';
+  const msg = choice.message || {};
+  // 1. Standard: message.content (string, non-empty)
+  if (msg.content && typeof msg.content === 'string' && msg.content.trim()) return msg.content;
+  // 2. DeepSeek / GLM: message.reasoning_content
+  if (msg.reasoning_content && typeof msg.reasoning_content === 'string' && msg.reasoning_content.trim()) return msg.reasoning_content;
+  // 3. Some OpenRouter reasoning models: message.content as array with {type:'output',text}
+  if (Array.isArray(msg.content)) {
+    const text = msg.content
+      .filter(p => p && (p.type === 'output' || p.type === 'text') && typeof p.text === 'string')
+      .map(p => p.text)
+      .join('\n');
+    if (text.trim()) return text;
+    // 3b. reasoning parts as fallback
+    const reason = msg.content
+      .filter(p => p && (p.type === 'reasoning' || p.type === 'thinking') && typeof p.text === 'string')
+      .map(p => p.text)
+      .join('\n');
+    if (reason.trim()) return reason;
+  }
+  // 4. NVIDIA NIM reasoning models: message.reasoning (string)
+  if (msg.reasoning && typeof msg.reasoning === 'string' && msg.reasoning.trim()) return msg.reasoning;
+  // 5. Claude thinking via compat: message.thinking
+  if (msg.thinking && typeof msg.thinking === 'string' && msg.thinking.trim()) return msg.thinking;
+  // 6. Legacy completions: choice.text
+  if (choice.text && typeof choice.text === 'string' && choice.text.trim()) return choice.text;
+  // 7. Fallback
+  return '';
+}
+
 function postJSON(urlStr, body, headers, timeoutMs = RUN_OPTS.timeout_ms) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
@@ -120,7 +155,7 @@ async function callOpenAICompat(provider, model, system, user) {
   if (res.status >= 400) return { success: false, content: `[ERROR ${res.status}: ${res.body.slice(0, 300)}]`, model, latency_ms: elapsed };
   let data;
   try { data = JSON.parse(res.body); } catch (e) { return { success: false, content: `[parse-error]`, model, latency_ms: elapsed }; }
-  const content = data.choices?.[0]?.message?.content || '';
+  const content = extractContent(data);
   return { success: true, content, model, latency_ms: elapsed, tokens: data.usage || {} };
 }
 
