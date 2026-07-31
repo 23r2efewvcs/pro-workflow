@@ -151,7 +151,15 @@ async function callOpenAICompat(provider, model, system, user) {
 
   const { res, error } = await postJSONWithRetry(url, payload, authHeaders);
   const elapsed = Date.now() - start;
-  if (error) return { success: false, content: `[ERROR connection: ${error.code || error.message}]`, model, latency_ms: elapsed };
+  if (error) {
+    return { success: false, content: `[ERROR connection: ${error.code || error.message}]\nHint: upstream endpoint slow/overloaded. Try: --timeout ${RUN_OPTS.timeout_ms * 2}, or --sequential, or switch provider.`, model, latency_ms: elapsed };
+  }
+  if (res.status === 429) {
+    return { success: false, content: `[ERROR 429: Too Many Requests — upstream rate-limited.]\nHint: another client (e.g. opencode TUI) may be using the same API key. Try: wait 60s, or pass --sequential, or switch provider, or use a separate API key.`, model, latency_ms: elapsed };
+  }
+  if (res.status >= 500) {
+    return { success: false, content: `[ERROR ${res.status}: Server error — upstream is experiencing issues.]\nHint: retry later, or check provider status page.`, model, latency_ms: elapsed };
+  }
   if (res.status >= 400) return { success: false, content: `[ERROR ${res.status}: ${res.body.slice(0, 300)}]`, model, latency_ms: elapsed };
   let data;
   try { data = JSON.parse(res.body); } catch (e) { return { success: false, content: `[parse-error]`, model, latency_ms: elapsed }; }
@@ -179,7 +187,15 @@ async function callAnthropic(provider, model, system, user) {
 
   const { res, error } = await postJSONWithRetry(url, payload, authHeaders);
   const elapsed = Date.now() - start;
-  if (error) return { success: false, content: `[ERROR connection: ${error.code || error.message}]`, model, latency_ms: elapsed };
+  if (error) {
+    return { success: false, content: `[ERROR connection: ${error.code || error.message}]\nHint: upstream endpoint slow/overloaded. Try: --timeout ${RUN_OPTS.timeout_ms * 2}, or switch provider.`, model, latency_ms: elapsed };
+  }
+  if (res.status === 429) {
+    return { success: false, content: `[ERROR 429: Anthropic rate-limited.]\nHint: wait 60s, or use a different API key.`, model, latency_ms: elapsed };
+  }
+  if (res.status >= 500) {
+    return { success: false, content: `[ERROR ${res.status}: Server error — upstream is experiencing issues.]\nHint: retry later, or check provider status page.`, model, latency_ms: elapsed };
+  }
   if (res.status >= 400) return { success: false, content: `[ERROR ${res.status}: ${res.body.slice(0, 300)}]`, model, latency_ms: elapsed };
   let data;
   try { data = JSON.parse(res.body); } catch { return { success: false, content: '[parse-error]', model, latency_ms: elapsed }; }
