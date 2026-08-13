@@ -133,7 +133,10 @@ async function callAnthropic(provider, model, system, user) {
     system,
     messages: [{ role: 'user', content: user }],
   };
-  if (RUN_OPTS.reasoning_effort) payload.thinking = { type: 'adaptive' };
+  if (RUN_OPTS.reasoning_effort) {
+    payload.thinking = { type: 'adaptive' };
+    payload.output_config = { effort: RUN_OPTS.reasoning_effort };
+  }
   const authHeaders = {
     'x-api-key': process.env[provider.envKey],
     'anthropic-version': '2023-06-01',
