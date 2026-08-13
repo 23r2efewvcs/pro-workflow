@@ -331,7 +331,7 @@ function usage() {
 Options:
   --max-tokens   Max output tokens per model call (default 4000; bump to 16000+ for reasoning models)
   --timeout      HTTP request timeout in ms (default 120000; bump to 300000+ for slow NIM endpoints)
-  --max-retries  Retry count on 429/5xx (default 1; exponential backoff 2s, 4s, ...)
+  --max-retries  Retry count on connection errors and 429/5xx (default 1; exponential backoff 2s, 4s, ...)
   --sequential   Run model calls one at a time instead of in parallel (use when free endpoints
                  like NVIDIA NIM reject concurrent requests with ETIMEDOUT / 429)`);
   process.exit(1);

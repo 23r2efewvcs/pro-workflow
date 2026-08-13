@@ -19,9 +19,11 @@ Karpathy's LLM Council pattern, provider-agnostic. dair-academy's version hardco
 
 ## Three phases
 
-1. **Independent**: each model answers in parallel
-2. **Ranking**: each model ranks anonymized peer responses
+1. **Independent**: each model answers in parallel by default
+2. **Ranking**: each model ranks anonymized peer responses in parallel by default
 3. **Synthesis**: chairman model reads all responses + rankings → final answer
+
+`--sequential` overrides the default parallel behavior for phases 1 and 2, running their model calls one at a time.
 
 ## Provider config
 
