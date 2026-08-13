@@ -82,6 +82,26 @@ function postJSON(urlStr, body, headers, timeoutMs = RUN_OPTS.timeout_ms) {
   });
 }
 
+async function postJSONWithRetry(urlStr, body, headers) {
+  const delay = attempt => new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
+  let res;
+  let lastError;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await postJSON(urlStr, body, headers);
+    } catch (e) {
+      // Connection-level error (ETIMEDOUT, ECONNRESET)
+      lastError = e;
+      if (attempt >= RUN_OPTS.max_retries) return { error: lastError };
+      await delay(attempt + 1);
+      continue;
+    }
+    if (res.status < 500 && res.status !== 429) return { res };
+    if (attempt >= RUN_OPTS.max_retries) return { res };
+    await delay(attempt + 1);
+  }
+}
+
 async function callOpenAICompat(provider, model, system, user) {
   const start = Date.now();
   const url = `${provider.baseUrl}/chat/completions`;
@@ -93,26 +113,9 @@ async function callOpenAICompat(provider, model, system, user) {
   };
   const authHeaders = { Authorization: `Bearer ${process.env[provider.envKey]}` };
 
-  let res;
-  let attempt = 0;
-  while (true) {
-    try {
-      res = await postJSON(url, payload, authHeaders);
-    } catch (e) {
-      // Connection-level error (ETIMEDOUT, ECONNRESET)
-      if (attempt >= RUN_OPTS.max_retries) {
-        return { success: false, content: `[ERROR connection: ${e.code || e.message}]`, model, latency_ms: Date.now() - start };
-      }
-      attempt += 1;
-      await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
-      continue;
-    }
-    if (res.status < 500 && res.status !== 429) break;
-    if (attempt >= RUN_OPTS.max_retries) break;
-    attempt += 1;
-    await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
-  }
+  const { res, error } = await postJSONWithRetry(url, payload, authHeaders);
   const elapsed = Date.now() - start;
+  if (error) return { success: false, content: `[ERROR connection: ${error.code || error.message}]`, model, latency_ms: elapsed };
   if (res.status >= 400) return { success: false, content: `[ERROR ${res.status}: ${res.body.slice(0, 300)}]`, model, latency_ms: elapsed };
   let data;
   try { data = JSON.parse(res.body); } catch (e) { return { success: false, content: `[parse-error]`, model, latency_ms: elapsed }; }
@@ -134,25 +137,9 @@ async function callAnthropic(provider, model, system, user) {
     'anthropic-version': '2023-06-01',
   };
 
-  let res;
-  let attempt = 0;
-  while (true) {
-    try {
-      res = await postJSON(url, payload, authHeaders);
-    } catch (e) {
-      if (attempt >= RUN_OPTS.max_retries) {
-        return { success: false, content: `[ERROR connection: ${e.code || e.message}]`, model, latency_ms: Date.now() - start };
-      }
-      attempt += 1;
-      await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
-      continue;
-    }
-    if (res.status < 500 && res.status !== 429) break;
-    if (attempt >= RUN_OPTS.max_retries) break;
-    attempt += 1;
-    await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt - 1)));
-  }
+  const { res, error } = await postJSONWithRetry(url, payload, authHeaders);
   const elapsed = Date.now() - start;
+  if (error) return { success: false, content: `[ERROR connection: ${error.code || error.message}]`, model, latency_ms: elapsed };
   if (res.status >= 400) return { success: false, content: `[ERROR ${res.status}: ${res.body.slice(0, 300)}]`, model, latency_ms: elapsed };
   let data;
   try { data = JSON.parse(res.body); } catch { return { success: false, content: '[parse-error]', model, latency_ms: elapsed }; }
