@@ -383,8 +383,9 @@ Options:
   --max-retries      Retry count on connection errors and 429/5xx (default 1; exponential backoff 2s, 4s, ...)
   --sequential       Run model calls one at a time instead of in parallel (use when free endpoints
                      like NVIDIA NIM reject concurrent requests with ETIMEDOUT / 429)
-  --reasoning-effort Pass reasoning effort to OpenAI-compat payload as reasoning.effort
-                     (low|medium|high) — for o1/o3/DeepSeek/Claude thinking models`);
+  --reasoning-effort Pass reasoning effort (low|medium|high) for thinking models.
+                     OpenAI-compat: reasoning.effort; Anthropic Messages: thinking.type=adaptive
+                     plus output_config.effort`);
   process.exit(1);
 }
 
